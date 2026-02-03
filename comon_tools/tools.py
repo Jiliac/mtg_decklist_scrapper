@@ -182,6 +182,10 @@ class SlugGenerator:
 class OrderNormalizer:
     @staticmethod
     def reorder_decks(decks: list[Deck], standings: list[Standing], bracket_rounds: list[Round], update_result: bool) -> list[Deck]:
+        # Handle case where decks is None
+        if decks is None:
+            return []
+
         ordered_decks = []
 
         player_order = OrderNormalizer.get_player_order(decks, standings, bracket_rounds)
@@ -240,9 +244,10 @@ class OrderNormalizer:
                 )
 
         # Add missing players from decks
-        for deck in decks:
-            if deck.player not in result:
-                result.append(deck.player)
+        if decks is not None:
+            for deck in decks:
+                if deck.player not in result:
+                    result.append(deck.player)
 
         return list(dict.fromkeys(result))  # Remove duplicates while preserving order
 

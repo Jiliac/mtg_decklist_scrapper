@@ -202,9 +202,18 @@ def main():
         # update_folder(cache_folder, MTGmelee_legacy, "MTGmelee", start_date, end_date, include_leagues)
     if use_topdeck:
         print("Updating Topdeck...")
-        update_folder(cache_folder, TopDeck, "Topdeck", start_date, end_date, include_leagues)
+        try:
+            update_folder(cache_folder, TopDeck, "Topdeck", start_date, end_date, include_leagues)
+        except FileNotFoundError as e:
+            if "api_topdeck.txt" in str(e):
+                print(f"Warning: Skipping TopDeck - API key file not found. To use TopDeck, create the file: Api_token_and_login/api_topdeck.txt")
+            else:
+                raise
     if use_manatrader:
         print("Updating Manatrader...")
-        update_folder(cache_folder, ManatraderClient, "Manatrader", start_date, end_date, include_leagues)
+        try:
+            update_folder(cache_folder, ManatraderClient, "Manatrader", start_date, end_date, include_leagues)
+        except (FileNotFoundError, Exception) as e:
+            print(f"Warning: Skipping Manatrader - {str(e)}")
 if __name__ == "__main__":
     main()
