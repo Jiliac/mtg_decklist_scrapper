@@ -161,7 +161,7 @@ def main():
         "source",
         type=str,
         nargs="?",
-        help="Source type: 'mtgo', 'melee', 'topdeck','manatrader', or 'all'. Defaults to 'all'.",
+        help="Source type: 'mtgo', 'melee', 'topdeck', 'manatrader', 'cardsrealm', or 'all'. Defaults to 'all'.",
         default="all",
     )
     arg_parser.add_argument(
