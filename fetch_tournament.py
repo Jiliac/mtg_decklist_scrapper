@@ -21,11 +21,10 @@ import Client.TopDeckClient as TopDeck
 import Client.ManatraderClient as ManatraderClient
 import Client.CardsrealmClient as CardsrealmClient
 
-
+# python fetch_tournament.py ./MTG_decklistcache/Tournaments 2025-01-01 2026-04-13 CardsRealm keepleague
 # python fetch_tournament.py ./MTG_decklistcache/Tournaments 2024-01-01 2025-03-30 mtgo keepleague
-# python fetch_tournament.py ./MTG_decklistcache/Tournaments 2025-03-01 2025-04-26 melee keepleague
 # python fetch_tournament.py ./MTG_decklistcache/Tournaments 2025-01-01 2025-02-28 melee keepleague
-# python fetch_tournament.py ./MTG_decklistcache/Tournaments 2025-04-01 2025-05-09 all keepleague
+# python fetch_tournament.py ./MTG_decklistcache/Tournaments 2026-01-01 2026-04-15 all keepleague
 # Configure logging to file and console
 def configure_logging(log_file_path):
     class Logger:
@@ -75,8 +74,12 @@ def update_folder(cache_root_folder: str, source, source_name:str,start_date: da
     if tournaments is None:
         print(f"Failed to download tournaments from {source_name}. Skipping.")
         return
-
+    if source_name == "Topdeck":  
+        sleep_time = 60  # Longer sleep time for Topdeck to avoid rate limits
+    else:
+        sleep_time = 5  # Default sleep time for other sources    
     # Filter out leagues if requested
+
     if not include_leagues:
         tournaments = [t for t in tournaments if "league" not in t.name.lower()]
         print(f"Filtered out leagues, {len(tournaments)} tournaments remaining")
@@ -94,7 +97,7 @@ def update_folder(cache_root_folder: str, source, source_name:str,start_date: da
         if os.path.exists(target_file):
             continue
         print(f"- Downloading tournament {sanitize_json_file}")
-        details = run_with_retry(lambda: source.TournamentList().get_tournament_details(tournament), 5)
+        details = run_with_retry(lambda: source.TournamentList().get_tournament_details(tournament), sleep_time, 5)
         if not details:
             print(f"-- Tournament has no data, skipping")
             if not os.listdir(target_folder):  # If folder is empty, remove it
@@ -117,7 +120,7 @@ def update_folder(cache_root_folder: str, source, source_name:str,start_date: da
         os.replace(temp_file, target_file) 
 
 # Retry function
-def run_with_retry(action, max_attempts: int):
+def run_with_retry(action, sleep_time: int, max_attempts: int):
     retry_count = 1
     while True:
         try:
@@ -127,7 +130,7 @@ def run_with_retry(action, max_attempts: int):
                 print(f"-- Error '{str(ex).strip('.')}' during call, retrying ({retry_count + 1}/{max_attempts})")
                 retry_count += 1
                 # add sleep before retry
-                time.sleep(5)  
+                time.sleep(sleep_time)  
             else:
                 raise
 

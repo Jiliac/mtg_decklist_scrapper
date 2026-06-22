@@ -23,6 +23,23 @@ from requests.cookies import RequestsCookieJar
 # sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 
+def pick_main_deck(player_decks):
+    """Pick the largest decklist among a player's submissions.
+
+    On Pro Tours melee.gg records both the Standard deck and the draft deck
+    under the same player, and the draft (40 cards) is sometimes the most
+    recent submission. Picking by total card count from the Records payload
+    avoids capturing the draft deck for the Standard tournament file.
+    """
+    def card_count(deck):
+        rec = getattr(deck, 'tournament_decklists', None)
+        if not rec or not rec.decklists:
+            return -1  # no Records: keep legacy "last" preference via stable sort
+        return sum(int(c.get('q', 0) or 0) for c in rec.decklists)
+
+    return max(player_decks, key=card_count)
+
+
 class MtgMeleeClient:
     @staticmethod
     def get_client(load_cookies: bool = False):
@@ -720,7 +737,10 @@ class MtgMeleeAnalyzer:
         )
 
     def generate_pro_tour_tournament(self, tournament: MtgMeleeTournamentInfo, players: List[MtgMeleePlayerInfo]) -> MtgMeleeTournament:
-        deck_uris = [p.decks[-1].uri for p in players if p.decks]
+        # Pro Tours mix Standard + draft submissions on the same player; the
+        # last submission can be the draft deck. Pick the largest decklist
+        # (constructed ~75 cards vs draft ~40) using the API's Records payload.
+        deck_uris = [pick_main_deck(p.decks).uri for p in players if p.decks]
         decks = [MtgMeleeClient().get_deck(uri, players, True) for uri in deck_uris]
 
         formats = {deck.format for deck in decks}  
@@ -775,9 +795,9 @@ class TournamentList:
             player_result = f"{player_position}th Place" if player_position > 3 else f"{player_position}st Place"  # Simplified result naming
 
             if len(player.decks) > 0:
-                deck_uri = player.decks[-1].uri
+                deck_uri = pick_main_deck(player.decks).uri
                 deck = MtgMeleeClient().get_deck(deck_uri, players)
-            else: 
+            else:
                 deck = None
             if deck is not None:
                 decks.append(
