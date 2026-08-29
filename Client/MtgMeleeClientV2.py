@@ -164,6 +164,28 @@ class MtgMeleeClient:
                 json.dump(cookies_to_store, f, indent=2)
 
     @staticmethod
+    def _accept_policies(session, response):
+        """
+        Melee redirects authenticated requests to /Account/Manage when the account
+        has a pending policy (privacy policy) to accept, answering HTML instead of
+        JSON. Submit the acceptance form so the session gets the management cookie.
+
+        Returns True if an acceptance was submitted (caller should retry the request).
+        """
+        if "/Account/Manage" not in response.url:
+            return False
+        form = BeautifulSoup(response.text, "html.parser").find("form", {"id": "site-confirm-policies-form"})
+        if not form:
+            return False
+        payload = {i["name"]: i.get("value", "") for i in form.find_all("input") if i.get("name")}
+        ack = session.post("https://melee.gg/Account/UpdateManagementCookie", data=payload)
+        if ack.status_code != 200 or '"Error":true' in ack.text.lower():
+            print(f"Failed to accept Melee policies: {ack.status_code} {ack.text[:200]}")
+            return False
+        print("Accepted pending Melee account policies.")
+        return True
+
+    @staticmethod
     def normalize_spaces(data):
         return re.sub(r'\s+', ' ', data).strip()
 
@@ -447,13 +469,17 @@ class MtgMeleeClient:
             MAX_RETRIES = 3
             DELAY_SECONDS = 2
             for attempt in range(1, MAX_RETRIES + 1):
-                response = self.get_client(load_cookies = True).post(tournament_list_url,data=payload)
+                client = self.get_client(load_cookies = True)
+                response = client.post(tournament_list_url,data=payload)
                 if response.status_code == 401:
                     print(f"Attempt {attempt}: Authentication required (401). Refreshing cookies...")
                     # Force refresh cookies on authentication failure
                     client = MtgMeleeClient.get_client(load_cookies=False)
                     MtgMeleeClient._refresh_cookies(client, force_login=True)
                     MtgMeleeClient._load_cookies(client)
+                    response = client.post(tournament_list_url, data=payload)
+
+                if MtgMeleeClient._accept_policies(client, response):
                     response = client.post(tournament_list_url, data=payload)
 
                 if response.text.strip():  # vérifie que la réponse n'est pas vide
@@ -594,7 +620,10 @@ class MtgMeleeAnalyzerSettings:
     ValidFormats = ["Standard", "Modern", "Pioneer", "Legacy", "Vintage", "Pauper","Commander","Premodern","Duel Commander"] #
     PlayersLoadedForAnalysis = 25
     DecksLoadedForAnalysis = 16
-    BlacklistedTerms = ["Team "]
+    # "Premodern"/"Old School" events are sometimes mis-tagged as Modern on Melee
+    # (organizer sets FormatName=Modern), which routes them into Modern_data.json.
+    # Neither format is tracked, so skip by name regardless of the reported format.
+    BlacklistedTerms = ["Team ", "Premodern", "Old School"]
 
 
 class MtgMeleeAnalyzer:
