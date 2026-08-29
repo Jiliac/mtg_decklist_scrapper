@@ -12,6 +12,7 @@ from datetime import datetime, timezone #, timedelta
 from dateutil.parser import isoparse
 from urllib.parse import urljoin
 import os
+import time
 # import sys
 from typing import List #, Optional
 # import html
@@ -44,6 +45,19 @@ class TournamentList:
             new_year += 1
         return date.replace(year=new_year, month=new_month, day=1)
 
+    @staticmethod
+    def _get_with_retry(url: str, attempts: int = 5, sleep_seconds: int = 5):
+        """GET with retries: mtgo.com intermittently hangs or drops connections."""
+        for attempt in range(1, attempts + 1):
+            try:
+                return requests.get(url, timeout=MTGOSettings.REQUEST_TIMEOUT)
+            except requests.RequestException as ex:
+                if attempt == attempts:
+                    print(f"-- Giving up on {url} after {attempts} attempts: {ex}")
+                    return None
+                print(f"-- Error '{ex}' fetching {url}, retrying ({attempt + 1}/{attempts})")
+                time.sleep(sleep_seconds)
+
     def DL_tournaments(start_date: datetime, end_date: datetime = None) -> List[dict]:
         if end_date is None:
             end_date = datetime.now(timezone.utc)
@@ -56,8 +70,8 @@ class TournamentList:
                 month=f"{current_date.month:02}"
             )
 
-            response = requests.get(tournament_list_url, timeout=MTGOSettings.REQUEST_TIMEOUT)
-            if response.status_code != 200:
+            response = TournamentList._get_with_retry(tournament_list_url)
+            if response is None or response.status_code != 200:
                 current_date = TournamentList.increment_month(current_date)  # Increment to the next month
                 continue
 
