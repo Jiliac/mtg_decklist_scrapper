@@ -23,6 +23,7 @@ from comon_tools.tools import *
 ##########################################################################################################################################################################
 # TournamentList
 class MTGOSettings:
+    REQUEST_TIMEOUT = 30
     LIST_URL = "https://www.mtgo.com/decklists/{year}/{month}"
     ROOT_URL = "https://www.mtgo.com"
     LEAGUE_REDOWNLOAD_DAYS = 3
@@ -55,7 +56,7 @@ class TournamentList:
                 month=f"{current_date.month:02}"
             )
 
-            response = requests.get(tournament_list_url)
+            response = requests.get(tournament_list_url, timeout=MTGOSettings.REQUEST_TIMEOUT)
             if response.status_code != 200:
                 current_date = TournamentList.increment_month(current_date)  # Increment to the next month
                 continue
@@ -99,9 +100,10 @@ class TournamentList:
         :param tournament: Instance de Tournament.
         :return: Un dictionnaire contenant les détails du tournoi ou None si une erreur se produit.
         """
-        response = requests.get(tournament.uri)
+        response = requests.get(tournament.uri, timeout=MTGOSettings.REQUEST_TIMEOUT)
         if response.status_code != 200:
-            return None
+            # Raise so that run_with_retry retries instead of silently skipping
+            raise RuntimeError(f"MTGO returned HTTP {response.status_code} for {tournament.uri}")
         html_content = response.text
         html_rows = [line.strip() for line in html_content.splitlines()]
 
@@ -111,7 +113,12 @@ class TournamentList:
             None
         )
         if not data_row:
-            return None
+            # Unpublished decklists redirect to the monthly listing page: nothing to fetch (yet).
+            if 'decklists-item' in html_content:
+                return None
+            # Otherwise mtgo.com served a truncated shell page (HTTP 200, no data).
+            # Raise so that run_with_retry retries instead of caching nothing for this tournament.
+            raise RuntimeError(f"MTGO page without decklist data for {tournament.uri}")
         # Extraire la partie JSON
         json_data = data_row[29:-1]  # Skip 29 caractères initiaux et retirer le dernier caractère (point-virgule)
         event_json = json.loads(json_data)
