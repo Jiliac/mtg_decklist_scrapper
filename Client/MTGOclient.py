@@ -24,7 +24,30 @@ from comon_tools.tools import *
 ##########################################################################################################################################################################
 # TournamentList
 class MTGOSettings:
-    REQUEST_TIMEOUT = 30
+    # Uncached pages take 15-25s to render server-side (warm ones ~0.2s); the server
+    # gives up rendering at ~30s and returns the listing page instead. Don't abort early.
+    REQUEST_TIMEOUT = 60
+    HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Connection": "keep-alive",
+    }
+    # Shared keep-alive session: plain per-call GETs to mtgo.com time out ~40% of the
+    # time on large league pages; a persistent session with gzip is fast and reliable.
+    _session = None
+
+    @classmethod
+    def session(cls) -> requests.Session:
+        if cls._session is None:
+            cls._session = requests.Session()
+            cls._session.headers.update(cls.HEADERS)
+        return cls._session
+
+    @classmethod
+    def get(cls, url: str) -> requests.Response:
+        return cls.session().get(url, timeout=cls.REQUEST_TIMEOUT)
     LIST_URL = "https://www.mtgo.com/decklists/{year}/{month}"
     ROOT_URL = "https://www.mtgo.com"
     LEAGUE_REDOWNLOAD_DAYS = 3
@@ -50,7 +73,7 @@ class TournamentList:
         """GET with retries: mtgo.com intermittently hangs or drops connections."""
         for attempt in range(1, attempts + 1):
             try:
-                return requests.get(url, timeout=MTGOSettings.REQUEST_TIMEOUT)
+                return MTGOSettings.get(url)
             except requests.RequestException as ex:
                 if attempt == attempts:
                     print(f"-- Giving up on {url} after {attempts} attempts: {ex}")
@@ -114,7 +137,9 @@ class TournamentList:
         :param tournament: Instance de Tournament.
         :return: Un dictionnaire contenant les détails du tournoi ou None si une erreur se produit.
         """
-        response = requests.get(tournament.uri, timeout=MTGOSettings.REQUEST_TIMEOUT)
+        started = time.monotonic()
+        response = MTGOSettings.get(tournament.uri)
+        elapsed = time.monotonic() - started
         if response.status_code != 200:
             # Raise so that run_with_retry retries instead of silently skipping
             raise RuntimeError(f"MTGO returned HTTP {response.status_code} for {tournament.uri}")
@@ -126,13 +151,26 @@ class TournamentList:
             (line for line in html_rows if line.startswith("window.MTGO.decklists.data = ")),
             None
         )
+        if not data_row and elapsed < 5:
+            # An instant 200 with no data is a CDN-cached copy of the fallback page; plain
+            # retries keep hitting the same cache entry. Refetch with a cache-busting query
+            # param to force an origin render.
+            busted_uri = f"{tournament.uri}?nocache={int(time.time())}"
+            started = time.monotonic()
+            response = MTGOSettings.get(busted_uri)
+            elapsed = time.monotonic() - started
+            if response.status_code == 200:
+                html_rows = [line.strip() for line in response.text.splitlines()]
+                data_row = next(
+                    (line for line in html_rows if line.startswith("window.MTGO.decklists.data = ")),
+                    None
+                )
         if not data_row:
-            # Unpublished decklists redirect to the monthly listing page: nothing to fetch (yet).
-            if 'decklists-item' in html_content:
-                return None
-            # Otherwise mtgo.com served a truncated shell page (HTTP 200, no data).
-            # Raise so that run_with_retry retries instead of caching nothing for this tournament.
-            raise RuntimeError(f"MTGO page without decklist data for {tournament.uri}")
+            # HTTP 200 but no data: either the decklist is not published yet (mtgo.com serves the
+            # monthly listing page instead) or the server hit its ~30s render deadline. The two are
+            # indistinguishable, so raise and let run_with_retry retry; unpublished ones are skipped
+            # after the retries and picked up on a later run.
+            raise RuntimeError(f"MTGO served no decklist data after {elapsed:.0f}s for {tournament.uri}")
         # Extraire la partie JSON
         json_data = data_row[29:-1]  # Skip 29 caractères initiaux et retirer le dernier caractère (point-virgule)
         event_json = json.loads(json_data)
